@@ -1,0 +1,21 @@
+{
+  "name": "vscode-security-scanner",
+  "displayName": "VSCode Security Scanner",
+  "description": "Scans JavaScript code for vulnerabilities",
+  "version": "1.0.0",
+  "publisher": "q4nt4r",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Other"],
+  "main": "extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vulnerabilityScanner.scan",
+        "title": "Scan Code for Vulnerabilities"
+      }
+    ]
+  },
+  "dependencies": {}
+}
