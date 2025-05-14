@@ -1,21 +1,64 @@
 {
-  "name": "vscode-security-scanner",
-  "displayName": "VSCode Security Scanner",
-  "description": "Scans JavaScript code for vulnerabilities",
+  "name": "vulnerability-scanner",
+  "displayName": "Vulnerability Scanner",
+  "publisher": "your-unique-publisher-name",
+  "description": "Scans code for security vulnerabilities",
   "version": "1.0.0",
-  "publisher": "q4nt4r",
   "engines": {
     "vscode": "^1.75.0"
   },
-  "categories": ["Other"],
-  "main": "extension.js",
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:vulnerabilityScanner.scan",
+    "onCommand:vulnerabilityScanner.scanProject",
+    "onCommand:vulnerabilityScanner.fixAll"
+  ],
+  "main": "./extension.js",
   "contributes": {
     "commands": [
       {
         "command": "vulnerabilityScanner.scan",
-        "title": "Scan Code for Vulnerabilities"
+        "title": "Scan for Vulnerabilities"
+      },
+      {
+        "command": "vulnerabilityScanner.scanProject",
+        "title": "Scan Entire Project"
+      },
+      {
+        "command": "vulnerabilityScanner.fixAll",
+        "title": "Fix All Auto-Fixable Vulnerabilities"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Vulnerability Scanner",
+      "properties": {
+        "vulnerabilityScanner.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically scan files when saved"
+        },
+        "vulnerabilityScanner.scanOnOpen": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically scan files when opened"
+        },
+        "vulnerabilityScanner.showPanelAutomatically": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show results panel automatically when vulnerabilities are found"
+        }
+      }
+    }
   },
-  "dependencies": {}
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "node ./test/runTest.js"
+  },
+  "devDependencies": {
+    "eslint": "^8.33.0",
+    "vscode-test": "^1.6.1"
+  }
 }
