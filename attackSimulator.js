@@ -3,7 +3,7 @@ const { OpenAI } = require('openai');
 
 // Initialize OpenAI instance (replace 'YOUR_OPENAI_API_KEY' with your actual API key or use environment variable)
 const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY || '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'
+    apiKey: process.env.OPENAI_API_KEY || 'APIKEY'
 });
 
 class AttackSimulator {
