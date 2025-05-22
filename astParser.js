@@ -26,7 +26,8 @@ class ASTParser {
                                 line: loc.start.line,
                                 codeSnippet: text.split('\n')[loc.start.line - 1].trim(),
                                 fix: 'Use JSON.parse() or safe alternatives',
-                                documentation: 'https://owasp.org/www-community/attacks/Code_Injection'
+                                documentation: 'https://owasp.org/www-community/attacks/Code_Injection',
+                                cweId: 95 // CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code
                             });
                         }
                     }
