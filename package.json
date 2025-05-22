@@ -25,11 +25,7 @@
     "theme": "dark"
   },
   "activationEvents": [
-    "onCommand:vulnerabilityScanner.scan",
-    "onCommand:vulnerabilityScanner.scanProject",
-    "onCommand:vulnerabilityScanner.fixAll",
-    "onCommand:vulnerabilityScanner.showPanel",
-    "onCommand:vulnerabilityScanner.scanDependencies"
+    "onStartupFinished"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -58,6 +54,11 @@
         "command": "vulnerabilityScanner.scanDependencies",
         "title": "Scan Project Dependencies",
         "category": "Vulnerability Scanner"
+      },
+      {
+        "command": "vulnerabilityScanner.testAttackSimulator",
+        "title": "Test Attack Simulator",
+        "category": "Vulnerability Scanner"
       }
     ],
     "configuration": {
@@ -85,14 +86,8 @@
         },
         "vulnerabilityScanner.enableAI": {
           "type": "boolean",
-          "default": false,
-          "description": "Enable AI-powered vulnerability analysis (requires OpenAI API key)"
-        },
-        "vulnerabilityScanner.openaiApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "OpenAI API key for AI features",
-          "scope": "application"
+          "default": true,
+          "description": "Enable AI-powered vulnerability analysis (uses Google AI Gemini)"
         },
         "vulnerabilityScanner.scanDependencies": {
           "type": "boolean",
@@ -117,7 +112,13 @@
         },
         "vulnerabilityScanner.severityThreshold": {
           "type": "string",
-          "enum": ["Critical", "High", "Medium", "Low", "All"],
+          "enum": [
+            "Critical",
+            "High",
+            "Medium",
+            "Low",
+            "All"
+          ],
           "default": "Medium",
           "description": "Minimum severity level to report"
         },
@@ -125,6 +126,16 @@
           "type": "number",
           "default": 100,
           "description": "Maximum number of vulnerabilities to report (0 for unlimited)"
+        },
+        "vulnerabilityScanner.enableCWEApi": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable CWE REST API integration for detailed vulnerability information"
+        },
+        "vulnerabilityScanner.cweCacheExpiry": {
+          "type": "number",
+          "default": 30,
+          "description": "Number of days to cache CWE information (0 to disable caching)"
         }
       }
     },
@@ -172,24 +183,25 @@
     "watch": "webpack --mode development --watch"
   },
   "devDependencies": {
-    "@types/vscode": "^1.75.0",
     "@types/node": "^16.11.7",
+    "@types/vscode": "^1.75.0",
     "eslint": "^8.33.0",
+    "ts-loader": "^9.4.2",
+    "typescript": "^4.9.4",
     "vscode-test": "^1.6.1",
     "webpack": "^5.75.0",
-    "webpack-cli": "^5.0.1",
-    "ts-loader": "^9.4.2",
-    "typescript": "^4.9.4"
+    "webpack-cli": "^5.0.1"
   },
   "dependencies": {
     "@babel/parser": "^7.21.8",
     "@babel/traverse": "^7.21.5",
     "@babel/types": "^7.21.5",
-    "axios": "^1.4.0",
-    "openai": "^3.2.1",
+    "axios": "^1.9.0",
     "chart.js": "^4.3.0",
     "fs-extra": "^11.1.1",
-    "path": "^0.12.7"
+    "openai": "^4.100.0",
+    "path": "^0.12.7",
+    "puppeteer": "^24.8.2"
   },
   "repository": {
     "type": "git",

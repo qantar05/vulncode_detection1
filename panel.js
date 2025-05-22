@@ -7,7 +7,7 @@ const AttackSimulator = require('./attackSimulator');
 class VulnerabilitiesPanel {
     static viewType = 'vulnerabilityScanner.panel';
     static currentPanel = undefined;
-    
+
     // Panel properties
     panel;
     extensionUri;
@@ -20,7 +20,7 @@ class VulnerabilitiesPanel {
         this.extensionUri = extensionUri;
         this.vulnerabilities = vulnerabilities;
         this.lastScanTime = new Date();
-        
+
         // Set the webview's initial html content
         this.updateWebview();
 
@@ -67,6 +67,7 @@ class VulnerabilitiesPanel {
     }
 
     dispose() {
+        VulnerabilitiesPanel.currentPanel = undefined;
         this.panel.dispose();
         while (this.disposables.length) {
             const disposable = this.disposables.pop();
@@ -78,10 +79,13 @@ class VulnerabilitiesPanel {
         // Count vulnerabilities by severity and type
         const severityCounts = { Critical: 0, High: 0, Medium: 0, Low: 0 };
         const typeCounts = {};
-        
+
         vulnerabilities.forEach(vuln => {
-            severityCounts[vuln.severity]++;
-            typeCounts[vuln.type] = (typeCounts[vuln.type] || 0) + 1;
+            // Defensive: ensure valid severity and type
+            const sev = ['Critical', 'High', 'Medium', 'Low'].includes(vuln.severity) ? vuln.severity : 'Medium';
+            severityCounts[sev]++;
+            const type = vuln.type || 'Unknown';
+            typeCounts[type] = (typeCounts[type] || 0) + 1;
         });
 
         // Generate chart data
@@ -105,7 +109,8 @@ class VulnerabilitiesPanel {
         // Get paths to local resources
         const styleUri = this.getWebviewUri('media', 'styles.css');
         const scriptUri = this.getWebviewUri('media', 'main.js');
-        const chartJsUri = this.getWebviewUri('media', 'chart.min.js');
+        // Use CDN for Chart.js for reliability
+        const chartJsCdn = 'https://cdn.jsdelivr.net/npm/chart.js';
 
         // Generate vulnerability list HTML
         const vulnerabilitiesList = vulnerabilities.map((vuln, index) => this.getVulnerabilityHtml(vuln, index)).join('');
@@ -118,7 +123,7 @@ class VulnerabilitiesPanel {
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>Vulnerabilities Report</title>
                 <link href="${styleUri}" rel="stylesheet">
-                <script src="${chartJsUri}"></script>
+                <script src="${chartJsCdn}"></script>
                 <style>
                     body {
                         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -311,6 +316,69 @@ class VulnerabilitiesPanel {
                     .cvss-low {
                         background: #28a745;
                     }
+                    .cwe-badge {
+                        display: inline-block;
+                        padding: 2px 8px;
+                        border-radius: 12px;
+                        font-size: 12px;
+                        background: #17a2b8;
+                        color: white;
+                        margin-left: 10px;
+                    }
+                    .cwe-badge a {
+                        color: white;
+                        text-decoration: none;
+                    }
+                    .cwe-info {
+                        border-left: 4px solid #17a2b8;
+                    }
+                    .cwe-info h4 {
+                        color: #17a2b8;
+                    }
+                    .mitigations {
+                        margin-top: 15px;
+                        padding: 10px;
+                        background-color: rgba(23, 162, 184, 0.1);
+                        border-radius: 5px;
+                    }
+                    .mitigations h5 {
+                        color: #17a2b8;
+                        margin-top: 0;
+                        margin-bottom: 10px;
+                        font-weight: bold;
+                    }
+                    .mitigations ul {
+                        margin-top: 5px;
+                        padding-left: 20px;
+                    }
+                    .mitigations li {
+                        margin-bottom: 5px;
+                    }
+                    .consequences {
+                        margin-top: 15px;
+                        padding: 10px;
+                        background-color: rgba(220, 53, 69, 0.1);
+                        border-radius: 5px;
+                    }
+                    .consequences h5 {
+                        color: #dc3545;
+                        margin-top: 0;
+                        margin-bottom: 10px;
+                        font-weight: bold;
+                    }
+                    .consequences ul {
+                        margin-top: 5px;
+                        padding-left: 20px;
+                    }
+                    .consequences li {
+                        margin-bottom: 10px;
+                    }
+                    .consequence-note {
+                        margin-top: 5px;
+                        font-style: italic;
+                        padding-left: 10px;
+                        border-left: 2px solid #dc3545;
+                    }
                     .filters {
                         display: flex;
                         gap: 10px;
@@ -352,11 +420,11 @@ class VulnerabilitiesPanel {
                         <div>Total Vulnerabilities: ${vulnerabilities.length}</div>
                     </div>
                 </header>
-                
+
                 <div class="dashboard">
                     <div class="chart-container">
                         <h3>Severity Distribution</h3>
-                        <canvas id="severityChart"></canvas>
+                        <canvas id="severityChart" width="200" height="100"></canvas>
                     </div>
                     <div class="chart-container">
                         <h3>Vulnerability Types</h3>
@@ -368,6 +436,7 @@ class VulnerabilitiesPanel {
                     <button class="btn" onclick="rescan()">🔄 Rescan Project</button>
                     <button class="btn" onclick="exportReport('html')">📄 Export as HTML</button>
                     <button class="btn" onclick="exportReport('json')">📊 Export as JSON</button>
+                    <button class="btn" onclick="exportReport('pdf')">🖨️ Export as PDF</button>
                 </div>
 
                 <section class="vulnerabilities">
@@ -386,7 +455,7 @@ class VulnerabilitiesPanel {
                         </select>
                         <input type="text" id="searchInput" placeholder="Search vulnerabilities..." oninput="filterVulnerabilities()">
                     </div>
-                    
+
                     <div id="vulnerabilitiesList">
                         ${vulnerabilitiesList}
                     </div>
@@ -394,28 +463,34 @@ class VulnerabilitiesPanel {
 
                 <script src="${scriptUri}"></script>
                 <script>
-                    // Render charts
-                    const severityCtx = document.getElementById('severityChart');
-                    const severityChart = new Chart(severityCtx, {
-                        type: 'pie',
-                        data: ${JSON.stringify(pieChartData)},
-                        options: { 
-                            responsive: true,
-                            plugins: {
-                                legend: { position: 'right' }
-                            }
+                    // Render charts after DOM and Chart.js are loaded
+                    document.addEventListener('DOMContentLoaded', function() {
+                        const severityCtx = document.getElementById('severityChart');
+                        if (severityCtx && window.Chart) {
+                            new Chart(severityCtx, {
+                                type: 'pie',
+                                data: ${JSON.stringify(pieChartData)},
+                                options: {
+                                    responsive: true,
+                                    plugins: {
+                                        legend: { position: 'right' }
+                                    }
+                                }
+                            });
                         }
-                    });
 
-                    const typeCtx = document.getElementById('typeChart');
-                    const typeChart = new Chart(typeCtx, {
-                        type: 'bar',
-                        data: ${JSON.stringify(barChartData)},
-                        options: { 
-                            responsive: true,
-                            scales: {
-                                y: { beginAtZero: true }
-                            }
+                        const typeCtx = document.getElementById('typeChart');
+                        if (typeCtx && window.Chart) {
+                            new Chart(typeCtx, {
+                                type: 'bar',
+                                data: ${JSON.stringify(barChartData)},
+                                options: {
+                                    responsive: true,
+                                    scales: {
+                                        y: { beginAtZero: true }
+                                    }
+                                }
+                            });
                         }
                     });
 
@@ -428,63 +503,133 @@ class VulnerabilitiesPanel {
     }
 
     getVulnerabilityHtml(vuln, index) {
+        // Ensure all required fields have default values to prevent rendering issues
+        const safeVuln = {
+            ...vuln,
+            type: vuln.type || 'Unknown Vulnerability',
+            severity: vuln.severity || 'Medium',
+            message: vuln.message || 'Potential security vulnerability detected',
+            context: vuln.context || '',
+            codeSnippet: vuln.codeSnippet || 'No code snippet available'
+        };
+
         return `
-            <div class="vulnerability" data-severity="${vuln.severity}" data-type="${vuln.type}">
+            <div class="vulnerability" data-severity="${safeVuln.severity}" data-type="${safeVuln.type}">
                 <div class="vulnerability-header">
                     <h3>
-                        <span class="icon">${this.getSeverityIcon(vuln.severity)}</span>
-                        <span class="severity-${vuln.severity.toLowerCase()}">${vuln.type}</span>
-                        <span class="language-badge">${this.getLanguageFromType(vuln.type)}</span>
+                        <span class="icon">${this.getSeverityIcon(safeVuln.severity)}</span>
+                        <span class="severity-${safeVuln.severity.toLowerCase()}">${safeVuln.type}</span>
+                        <span class="language-badge">${this.getLanguageFromType(safeVuln.type)}</span>
                     </h3>
                     <div class="actions">
-                        ${vuln.autoFix ? `<button class="btn fix-btn" onclick="applyFix(${index})">🛠️ Auto-Fix</button>` : ''}
-                        ${(vuln.severity === 'High' || vuln.severity === 'Critical') ? 
+                        ${safeVuln.autoFix ? `<button class="btn fix-btn" onclick="applyFix(${index})">🛠️ Auto-Fix</button>` : ''}
+                        ${(safeVuln.severity === 'High' || safeVuln.severity === 'Critical') ?
                           `<button class="btn simulate-btn" onclick="simulateAttack(${index})">🔓 Simulate Attack</button>` : ''}
                         <button class="btn testcase-btn" onclick="showTestCases(${index})">🧪 Test Cases</button>
                     </div>
                 </div>
-                
+
                 <div class="vulnerability-meta">
-                    <span><strong>Location:</strong> Line ${vuln.line}</span>
-                    ${vuln.cvssScore ? `<span class="cvss-badge cvss-${this.getCvssSeverity(vuln.cvssScore)}">CVSS: ${vuln.cvssScore.toFixed(1)}</span>` : ''}
+                    <span><strong>Location:</strong> Line ${safeVuln.line}</span>
+                    ${safeVuln.cvssScore ? `<span class="cvss-badge cvss-${this.getCvssSeverity(safeVuln.cvssScore)}">CVSS: ${safeVuln.cvssScore.toFixed(1)}</span>` : ''}
+                    ${safeVuln.cweId ? `<span class="cwe-badge"><a href="https://cwe.mitre.org/data/definitions/${safeVuln.cweId}.html" target="_blank" onclick="showDocumentation('https://cwe.mitre.org/data/definitions/${safeVuln.cweId}.html')">CWE-${safeVuln.cweId}</a></span>` : ''}
                 </div>
-                
-                <pre><code>${vuln.codeSnippet}</code></pre>
-                
+
+                <pre><code>${safeVuln.codeSnippet}</code></pre>
+
                 <div class="info-section">
                     <h4>Description</h4>
-                    <p>${vuln.message}</p>
-                    <p>${vuln.context}</p>
+                    <p>${safeVuln.message}</p>
+                    ${safeVuln.context ? `<p>${safeVuln.context}</p>` : ''}
                 </div>
-                
-                ${vuln.cve ? `
+
+                ${safeVuln.cve ? `
                 <div class="info-section">
                     <h4>CVE Information</h4>
-                    <p><a href="https://nvd.nist.gov/vuln/detail/${vuln.cve}" target="_blank" onclick="showDocumentation('https://nvd.nist.gov/vuln/detail/${vuln.cve}')">${vuln.cve}</a></p>
+                    <p><a href="https://nvd.nist.gov/vuln/detail/${safeVuln.cve}" target="_blank" onclick="showDocumentation('https://nvd.nist.gov/vuln/detail/${safeVuln.cve}')">${safeVuln.cve}</a></p>
                 </div>` : ''}
-                
+
+                ${safeVuln.cweId ? `
+                <div class="info-section cwe-info">
+                    <h4>CWE Information</h4>
+                    <p><strong>CWE-${safeVuln.cweId}:</strong> ${safeVuln.cweInfo?.name || `Common Weakness Enumeration ${safeVuln.cweId}`}</p>
+                    ${safeVuln.cweInfo?.description ? `<p>${safeVuln.cweInfo.description}</p>` : ''}
+                    ${safeVuln.cweInfo?.likelihood ? `<p><strong>Likelihood:</strong> ${safeVuln.cweInfo.likelihood}</p>` : ''}
+
+                    <!-- Enhanced Mitigations Section -->
+                    ${safeVuln.cweInfo?.mitigations && Array.isArray(safeVuln.cweInfo.mitigations) && safeVuln.cweInfo.mitigations.length > 0 ? `
+                        <div class="mitigations">
+                            <h5>Potential Mitigations:</h5>
+                            <ul>
+                                ${safeVuln.cweInfo.mitigations.map(m => {
+                                    if (typeof m === 'string') return `<li>${m}</li>`;
+                                    if (m && typeof m === 'object') {
+                                        let content = m.Description || '';
+                                        if (m.Phase) content += ` (Phase: ${m.Phase})`;
+                                        if (m.Strategy) content += ` (Strategy: ${m.Strategy})`;
+                                        return `<li>${content}</li>`;
+                                    }
+                                    return '';
+                                }).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+
+                    <!-- Common Consequences Section -->
+                    ${safeVuln.cweInfo?.consequences && Array.isArray(safeVuln.cweInfo.consequences) && safeVuln.cweInfo.consequences.length > 0 ? `
+                        <div class="consequences">
+                            <h5>Common Consequences:</h5>
+                            <ul>
+                                ${safeVuln.cweInfo.consequences.map(c => {
+                                    let content = '';
+
+                                    // Add scope if available
+                                    if (c.Scope && Array.isArray(c.Scope) && c.Scope.length > 0) {
+                                        content += `<strong>Scope:</strong> ${c.Scope.join(', ')}`;
+                                    }
+
+                                    // Add impact if available
+                                    if (c.Impact && Array.isArray(c.Impact) && c.Impact.length > 0) {
+                                        if (content) content += ' - ';
+                                        content += `<strong>Impact:</strong> ${c.Impact.join(', ')}`;
+                                    }
+
+                                    // Add note/description if available
+                                    if (c.Note || c.Description) {
+                                        content += `<div class="consequence-note">${c.Note || c.Description}</div>`;
+                                    }
+
+                                    return content ? `<li>${content}</li>` : '';
+                                }).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+
+                    <p><a href="https://cwe.mitre.org/data/definitions/${safeVuln.cweId}.html" target="_blank" onclick="showDocumentation('https://cwe.mitre.org/data/definitions/${safeVuln.cweId}.html')">View on CWE Website</a></p>
+                </div>` : ''}
+
                 <div class="info-section">
                     <h4>Remediation</h4>
-                    ${vuln.fix ? `<p><strong>Quick Fix:</strong> ${vuln.fix}</p>` : ''}
-                    ${vuln.detailedSolution ? `<pre>${vuln.detailedSolution}</pre>` : ''}
+                    ${safeVuln.fix ? `<p><strong>Quick Fix:</strong> ${safeVuln.fix}</p>` : ''}
+                    ${safeVuln.detailedSolution ? `<pre>${safeVuln.detailedSolution}</pre>` : ''}
                 </div>
-                
-                ${vuln.aiAnalysis ? `
+
+                ${safeVuln.aiAnalysis ? `
                 <div class="info-section ai-analysis">
                     <h4>AI Analysis</h4>
-                    <div class="ai-content">${vuln.aiAnalysis}</div>
+                    <div class="ai-content">${safeVuln.aiAnalysis}</div>
                 </div>` : ''}
-                
-                ${vuln.attackScenario ? `
+
+                ${safeVuln.attackScenario ? `
                 <div class="info-section attack-scenario">
                     <h4>Attack Scenario</h4>
-                    <div class="scenario-content">${vuln.attackScenario}</div>
+                    <div class="scenario-content">${safeVuln.attackScenario}</div>
                 </div>` : ''}
-                
-                ${vuln.documentation ? `
+
+                ${safeVuln.documentation ? `
                 <div class="info-section">
                     <h4>Learn More</h4>
-                    <p><a href="${vuln.documentation}" target="_blank" onclick="showDocumentation('${vuln.documentation}')">${vuln.documentation}</a></p>
+                    <p><a href="${safeVuln.documentation}" target="_blank" onclick="showDocumentation('${safeVuln.documentation}')">${safeVuln.documentation}</a></p>
                 </div>` : ''}
             </div>
         `;
@@ -540,7 +685,7 @@ class VulnerabilitiesPanel {
                 editBuilder.replace(line.range, fixedCode);
             });
             vscode.window.showInformationMessage(`Fixed ${vuln.type} vulnerability`);
-            
+
             // Update the panel to show the vulnerability is fixed
             this.vulnerabilities = this.vulnerabilities.filter((_, i) => i !== message.index);
             this.updateWebview();
@@ -550,15 +695,50 @@ class VulnerabilitiesPanel {
     }
 
     async simulateAttack(message) {
-        if (!Array.isArray(this.vulnerabilities) || typeof message.index !== 'number') return;
+        console.log('Panel.simulateAttack called with message:', message);
+
+        if (!Array.isArray(this.vulnerabilities)) {
+            console.error('this.vulnerabilities is not an array:', this.vulnerabilities);
+            vscode.window.showErrorMessage('No vulnerabilities found to simulate attack.');
+            return;
+        }
+
+        if (typeof message.index !== 'number') {
+            console.error('message.index is not a number:', message.index);
+            vscode.window.showErrorMessage('Invalid vulnerability index.');
+            return;
+        }
 
         const vuln = this.vulnerabilities[message.index];
-        if (!vuln) return;
+        if (!vuln) {
+            console.error('No vulnerability found at index:', message.index);
+            vscode.window.showErrorMessage('Vulnerability not found.');
+            return;
+        }
+
+        console.log('Found vulnerability:', JSON.stringify(vuln, null, 2));
 
         try {
+            // Enable AI features temporarily for testing
+            const currentSetting = vscode.workspace.getConfiguration('vulnerabilityScanner').get('enableAI');
+            if (!currentSetting) {
+                console.log('Temporarily enabling AI features for attack simulation');
+                await vscode.workspace.getConfiguration('vulnerabilityScanner').update('enableAI', true, vscode.ConfigurationTarget.Global);
+            }
+
+            // Call the AttackSimulator class
+            console.log('Calling AttackSimulator.simulateAttack...');
             await AttackSimulator.simulateAttack(vuln);
+            console.log('AttackSimulator.simulateAttack completed');
+
+            // Restore original setting if we changed it
+            if (!currentSetting) {
+                console.log('Restoring AI features setting');
+                await vscode.workspace.getConfiguration('vulnerabilityScanner').update('enableAI', currentSetting, vscode.ConfigurationTarget.Global);
+            }
         } catch (error) {
-            vscode.window.showErrorMessage(`Attack simulation failed: ${error.message}`);
+            console.error('Attack simulation failed:', error);
+            vscode.window.showErrorMessage(`Attack simulation failed: ${error.message || 'Unknown error'}`);
         }
     }
 
@@ -621,30 +801,217 @@ class VulnerabilitiesPanel {
             if (!uri) return;
 
             let content;
-            if (format === 'html') {
-                content = this.getHtmlForWebview(this.vulnerabilities);
+            if (format === 'html' || format === 'pdf') {
+                // Create a standalone HTML report
+                const styleContent = fs.existsSync(path.join(__dirname, 'media', 'styles.css'))
+                    ? fs.readFileSync(path.join(__dirname, 'media', 'styles.css'), 'utf8')
+                    : '';
+
+                // Defensive: ensure valid severity and type
+                const severityCounts = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+                const typeCounts = {};
+
+                this.vulnerabilities.forEach(vuln => {
+                    const sev = ['Critical', 'High', 'Medium', 'Low'].includes(vuln.severity) ? vuln.severity : 'Medium';
+                    severityCounts[sev]++;
+                    const type = vuln.type || 'Unknown';
+                    typeCounts[type] = (typeCounts[type] || 0) + 1;
+                });
+
+                // Generate chart data
+                const pieChartData = {
+                    labels: Object.keys(severityCounts),
+                    datasets: [{
+                        data: Object.values(severityCounts),
+                        backgroundColor: ['#dc3545', '#fd7e14', '#ffc107', '#28a745'],
+                    }],
+                };
+
+                const barChartData = {
+                    labels: Object.keys(typeCounts),
+                    datasets: [{
+                        label: 'Vulnerability Types',
+                        data: Object.values(typeCounts),
+                        backgroundColor: '#0275d8',
+                    }],
+                };
+
+                // Generate vulnerability list HTML (remove all .actions for export)
+                const vulnerabilitiesList = this.vulnerabilities.map((vuln, index) => {
+                    let html = this.getVulnerabilityHtml(vuln, index);
+                    // Remove all <div class="actions">...</div>
+                    html = html.replace(/<div class="actions">[\s\S]*?<\/div>/g, '');
+                    return html;
+                }).join('');
+
+                content = `
+                    <!DOCTYPE html>
+                    <html lang="en">
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>Vulnerabilities Report</title>
+                        <style>
+                            ${styleContent}
+                            body {
+                                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                                padding: 20px;
+                                background-color: #fff;
+                                color: #333;
+                                line-height: 1.6;
+                                margin: 0;
+                            }
+                            h1, h2, h3, h4 {
+                                color: #333;
+                            }
+                            .chart-container {
+                                background: #f8f9fa;
+                                border: 1px solid #ddd;
+                            }
+                            .vulnerability {
+                                background: #f8f9fa;
+                                border: 1px solid #ddd;
+                            }
+                            pre, code {
+                                background: #f5f5f5;
+                                border: 1px solid #ddd;
+                            }
+                            .info-section {
+                                background: #f8f9fa;
+                                border: 1px solid #ddd;
+                            }
+                            .btn, .actions { display: none !important; }
+                        </style>
+                        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+                    </head>
+                    <body>
+                        <header>
+                            <h1>Security Vulnerability Report</h1>
+                            <div class="report-meta">
+                                <div>Scan Time: ${this.lastScanTime.toLocaleString()}</div>
+                                <div>Total Vulnerabilities: ${this.vulnerabilities.length}</div>
+                                <div>Export Date: ${new Date().toLocaleString()}</div>
+                            </div>
+                        </header>
+
+                        <div class="dashboard">
+                            <div class="chart-container">
+                                <h3>Severity Distribution</h3>
+                                <canvas id="severityChart" width="200" height="100"></canvas>
+                            </div>
+                            <div class="chart-container">
+                                <h3>Vulnerability Types</h3>
+                                <canvas id="typeChart"></canvas>
+                            </div>
+                        </div>
+
+                        <section class="vulnerabilities">
+                            <h2>Found ${this.vulnerabilities.length} Vulnerabilities</h2>
+                            <div id="vulnerabilitiesList">
+                                ${vulnerabilitiesList}
+                            </div>
+                        </section>
+
+                        <script>
+                            document.addEventListener('DOMContentLoaded', function() {
+                                const severityCtx = document.getElementById('severityChart');
+                                if (severityCtx && window.Chart) {
+                                    new Chart(severityCtx, {
+                                        type: 'pie',
+                                        data: ${JSON.stringify(pieChartData)},
+                                        options: {
+                                            responsive: true,
+                                            plugins: {
+                                                legend: { position: 'right' }
+                                            }
+                                        }
+                                    });
+                                }
+
+                                const typeCtx = document.getElementById('typeChart');
+                                if (typeCtx && window.Chart) {
+                                    new Chart(typeCtx, {
+                                        type: 'bar',
+                                        data: ${JSON.stringify(barChartData)},
+                                        options: {
+                                            responsive: true,
+                                            scales: {
+                                                y: { beginAtZero: true }
+                                            }
+                                        }
+                                    });
+                                }
+                            });
+                        </script>
+                    </body>
+                    </html>
+                `;
+
+                if (format === 'pdf') {
+                    // Use puppeteer to render and save as PDF
+                    const puppeteer = require('puppeteer');
+                    const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+                    const page = await browser.newPage();
+                    await page.setContent(content, { waitUntil: 'networkidle0' });
+                    await page.pdf({ path: uri.fsPath, format: 'A4', printBackground: true });
+                    await browser.close();
+
+                    vscode.window.showInformationMessage(`PDF report exported successfully to ${uri.fsPath}`);
+                    return;
+                }
             } else if (format === 'json') {
+                // Create a clean JSON representation of the vulnerabilities
+                const cleanVulnerabilities = this.vulnerabilities.map(vuln => {
+                    const cleanVuln = {
+                        type: vuln.type || 'Unknown',
+                        severity: vuln.severity || 'Medium',
+                        line: vuln.line || 0,
+                        codeSnippet: vuln.codeSnippet || '',
+                        message: vuln.message || '',
+                        context: vuln.context || '',
+                        fix: vuln.fix || '',
+                        detailedSolution: vuln.detailedSolution || '',
+                        documentation: vuln.documentation || '',
+                        cweId: vuln.cweId || null
+                    };
+
+                    if (vuln.cweInfo) {
+                        cleanVuln.cweInfo = {
+                            name: vuln.cweInfo.name || '',
+                            description: vuln.cweInfo.description || '',
+                            mitigations: vuln.cweInfo.mitigations || [],
+                            consequences: vuln.cweInfo.consequences || [],
+                            url: vuln.cweInfo.url || ''
+                        };
+                    }
+
+                    return cleanVuln;
+                });
+
                 content = JSON.stringify({
                     metadata: {
                         generatedAt: new Date().toISOString(),
                         tool: "Vulnerability Scanner",
-                        version: "1.0"
+                        version: "1.0",
+                        totalVulnerabilities: this.vulnerabilities.length
                     },
-                    vulnerabilities: this.vulnerabilities
+                    vulnerabilities: cleanVulnerabilities
                 }, null, 2);
             }
 
-            await fs.promises.writeFile(uri.fsPath, content);
-            vscode.window.showInformationMessage(`Report exported successfully to ${uri.fsPath}`);
+            if (format !== 'pdf') {
+                await fs.promises.writeFile(uri.fsPath, content);
+                vscode.window.showInformationMessage(`Report exported successfully to ${uri.fsPath}`);
+            }
         } catch (error) {
+            console.error('Export error:', error);
             vscode.window.showErrorMessage(`Failed to export report: ${error.message}`);
         }
     }
 
     static createOrShow(extensionUri, vulnerabilities) {
         const column = vscode.window.activeTextEditor?.viewColumn || vscode.ViewColumn.One;
-        
-        // If we already have a panel, show it
+
         if (VulnerabilitiesPanel.currentPanel) {
             VulnerabilitiesPanel.currentPanel.panel.reveal(column);
             VulnerabilitiesPanel.currentPanel.vulnerabilities = vulnerabilities;
@@ -653,7 +1020,6 @@ class VulnerabilitiesPanel {
             return VulnerabilitiesPanel.currentPanel;
         }
 
-        // Otherwise, create a new panel
         const panel = vscode.window.createWebviewPanel(
             VulnerabilitiesPanel.viewType,
             'Vulnerabilities Report',

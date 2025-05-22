@@ -1,0 +1,217 @@
+/* Base styles for the vulnerability report */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    padding: 20px;
+    background-color: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
+    line-height: 1.6;
+    margin: 0;
+}
+
+h1, h2, h3, h4 {
+    color: var(--vscode-editor-foreground);
+    margin-top: 0;
+}
+
+h1 {
+    font-size: 24px;
+    margin-bottom: 15px;
+    border-bottom: 1px solid var(--vscode-editorWidget-border);
+    padding-bottom: 10px;
+}
+
+h2 {
+    font-size: 20px;
+    margin: 25px 0 15px;
+}
+
+h3 {
+    font-size: 16px;
+    margin: 15px 0 10px;
+}
+
+h4 {
+    font-size: 14px;
+    margin: 10px 0 5px;
+    border-bottom: 1px solid var(--vscode-editorWidget-border);
+    padding-bottom: 5px;
+}
+
+header {
+    margin-bottom: 25px;
+}
+
+.report-meta {
+    display: flex;
+    gap: 20px;
+    font-size: 14px;
+    color: var(--vscode-descriptionForeground);
+    margin-top: 10px;
+}
+
+.dashboard {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.chart-container {
+    background: var(--vscode-editorWidget-background);
+    padding: 15px;
+    border-radius: 5px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border: 1px solid var(--vscode-editorWidget-border);
+}
+
+.actions {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.btn {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    padding: 8px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.btn:hover {
+    background: var(--vscode-button-hoverBackground);
+}
+
+.fix-btn {
+    background: #28a745;
+}
+
+.fix-btn:hover {
+    background: #218838;
+}
+
+.simulate-btn {
+    background: #dc3545;
+}
+
+.simulate-btn:hover {
+    background: #c82333;
+}
+
+.testcase-btn {
+    background: #17a2b8;
+}
+
+.testcase-btn:hover {
+    background: #138496;
+}
+
+.vulnerability {
+    background: var(--vscode-editorWidget-background);
+    border: 1px solid var(--vscode-editorWidget-border);
+    border-radius: 5px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.vulnerability-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.vulnerability-meta {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    margin-bottom: 15px;
+    font-size: 14px;
+}
+
+pre, code {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    background: var(--vscode-textCodeBlock-background);
+    padding: 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-size: 13px;
+    margin: 10px 0;
+    border: 1px solid var(--vscode-editorWidget-border);
+}
+
+code {
+    padding: 2px 4px;
+    font-size: 90%;
+}
+
+.info-section {
+    background: var(--vscode-input-background);
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 15px;
+    border: 1px solid var(--vscode-input-border);
+}
+
+.mitigations, .consequences {
+    margin-top: 15px;
+    padding: 10px;
+    border-radius: 5px;
+}
+
+.mitigations {
+    background-color: rgba(23, 162, 184, 0.1);
+}
+
+.consequences {
+    background-color: rgba(220, 53, 69, 0.1);
+}
+
+.mitigations h5, .consequences h5 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-weight: bold;
+}
+
+.mitigations h5 {
+    color: #17a2b8;
+}
+
+.consequences h5 {
+    color: #dc3545;
+}
+
+.mitigations ul, .consequences ul {
+    margin-top: 5px;
+    padding-left: 20px;
+}
+
+.mitigations li, .consequences li {
+    margin-bottom: 5px;
+}
+
+.consequence-note {
+    margin-top: 5px;
+    font-style: italic;
+    padding-left: 10px;
+    border-left: 2px solid #dc3545;
+}
+
+/* Responsive styles */
+@media (max-width: 768px) {
+    .dashboard {
+        grid-template-columns: 1fr;
+    }
+    .vulnerability-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    .actions {
+        flex-wrap: wrap;
+    }
+}

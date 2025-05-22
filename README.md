@@ -1,65 +1,121 @@
-# vulndetect README
+# CWE Analyzer
 
-This is the README for your extension "vulndetect". After writing up a brief description, we recommend including the following sections.
+A static code analysis tool that identifies potential vulnerabilities and maps them to Common Weakness Enumeration (CWE) IDs using the CWE REST API.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- Analyzes code for potential security vulnerabilities
+- Maps identified issues to CWE IDs
+- Retrieves detailed information from the CWE REST API
+- Supports multiple programming languages (Python, JavaScript, Java, C/C++)
+- Generates reports in different formats (text, JSON, Markdown)
+- Caches API responses for better performance
 
-For example if there is an image subfolder under your extension project workspace:
+## Installation
 
-\!\[feature X\]\(images/feature-x.png\)
+1. Clone this repository:
+   ```
+   git clone <repository-url>
+   cd cwe-analyzer
+   ```
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+2. Install the required dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
 
-## Requirements
+## Usage
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+### Command Line Interface
 
-## Extension Settings
+Analyze a single file:
+```
+python analyze_code.py path/to/file.py
+```
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+Analyze a directory:
+```
+python analyze_code.py path/to/directory
+```
 
-For example:
+Generate a report in a specific format:
+```
+python analyze_code.py path/to/file.py --format markdown --output report.md
+```
 
-This extension contributes the following settings:
+Available formats:
+- `text` (default): Plain text output
+- `json`: JSON format for machine processing
+- `markdown`: Markdown format for human-readable reports
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+### Python API
 
-## Known Issues
+You can also use the analyzer in your own Python code:
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+```python
+from cwe_analyzer import CWEAnalyzer
 
-## Release Notes
+# Create an analyzer
+analyzer = CWEAnalyzer()
 
-Users appreciate release notes as you update your extension.
+# Analyze a file
+results = analyzer.analyze_file("path/to/file.py")
 
-### 1.0.0
+# Process the results
+for result in results:
+    print(f"Line {result['line']}: {result['cwe_name']} (CWE-{result['cwe_id']})")
+    print(f"  {result['code']}")
+    print(f"  Severity: {result['severity']}")
+```
 
-Initial release of ...
+## CWE REST API
 
-### 1.0.1
+This tool uses the CWE REST API provided by MITRE to retrieve detailed information about CWE IDs. The API is available at `https://cwe-api.mitre.org/api/v1/`.
 
-Fixed issue #.
+Key endpoints used:
+- `/cwe/version` - Get CWE version information
+- `/cwe/weakness/{id}` - Get detailed information about a specific weakness
+- `/cwe/{id}/parents` - Get the parents of a CWE
+- `/cwe/{id}/children` - Get the children of a CWE
 
-### 1.1.0
+For more information about the CWE REST API, see the [Quick Start Instructions](https://github.com/CWE-CAPEC/REST-API-wg/blob/main/Quick%20Start.md).
 
-Added features X, Y, and Z.
+## Example
 
----
+The repository includes a sample vulnerable code file (`vulnerable_sample.py`) that you can use to test the analyzer:
 
-## Working with Markdown
+```
+python analyze_code.py vulnerable_sample.py --format markdown --output report.md
+```
 
-You can author your README using Visual Studio Code.  Here are some useful editor keyboard shortcuts:
+This will generate a report identifying the vulnerabilities in the sample code.
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux)
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux)
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets
+## Supported Vulnerability Types
 
-## For more information
+The analyzer can detect various types of vulnerabilities, including:
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+- SQL Injection (CWE-89)
+- Cross-site Scripting (CWE-79)
+- Command Injection (CWE-78)
+- Path Traversal (CWE-22)
+- Insecure Deserialization (CWE-502)
+- Hardcoded Credentials (CWE-798)
+- Weak Cryptography (CWE-327)
+- Buffer Overflow (CWE-120)
+- Format String Vulnerability (CWE-134)
+- And more...
 
-**Enjoy!**
+## Limitations
+
+- The analyzer uses pattern matching, which may result in false positives or false negatives
+- It does not perform data flow analysis or context-sensitive analysis
+- The accuracy depends on the patterns defined in the code
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- MITRE for providing the CWE REST API
+- The CWE community for maintaining the Common Weakness Enumeration

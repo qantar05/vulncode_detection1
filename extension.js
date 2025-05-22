@@ -39,6 +39,11 @@ let scanInProgress = false;
 
 async function activate(context) {
     console.log('Extension "vulnerability-scanner" is now active!');
+    console.log('Extension path:', context.extensionPath);
+    console.log('Available commands:', vscode.commands.getCommands(true).then(commands => {
+        const vulnCommands = commands.filter(cmd => cmd.includes('vulnerabilityScanner'));
+        console.log('Vulnerability Scanner commands:', vulnCommands);
+    }));
 
     // Store the extension context
     const extensionUri = context.extensionUri;
@@ -61,12 +66,25 @@ async function activate(context) {
     const showPanelCommand = vscode.commands.registerCommand('vulnerabilityScanner.showPanel', () => showLastResults(extensionUri));
     const scanDependenciesCommand = vscode.commands.registerCommand('vulnerabilityScanner.scanDependencies', () => scanProjectDependencies(extensionUri));
 
+    // Add a direct command to test the Attack Simulator
+    const testAttackSimulatorCommand = vscode.commands.registerCommand('vulnerabilityScanner.testAttackSimulator', async () => {
+        const AttackSimulator = require('./attackSimulator');
+        try {
+            vscode.window.showInformationMessage('Testing Attack Simulator...');
+            await AttackSimulator.simulateAttack(null); // This will use the fallback test vulnerability
+        } catch (error) {
+            console.error('Error testing Attack Simulator:', error);
+            vscode.window.showErrorMessage(`Error testing Attack Simulator: ${error.message || 'Unknown error'}`);
+        }
+    });
+
     context.subscriptions.push(
         scanCommand,
         scanProjectCommand,
         fixAllCommand,
         showPanelCommand,
         scanDependenciesCommand,
+        testAttackSimulatorCommand,
         extensionStatusBarItem
     );
 
@@ -91,13 +109,11 @@ function setupEventListeners(context) {
         })
     );
 
+    // No need to check for API keys as they are hardcoded in the attackSimulator.js file
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(async event => {
             if (event.affectsConfiguration('vulnerabilityScanner')) {
-                const config = vscode.workspace.getConfiguration('vulnerabilityScanner');
-                if (config.get('enableAI') && !config.get('openaiApiKey')) {
-                    vscode.window.showWarningMessage('AI features require an OpenAI API key in settings');
-                }
+                // Configuration changed, but no action needed
             }
         })
     );
@@ -147,7 +163,7 @@ async function scanEntireProject(extensionUri) {
                 if (result?.vulnerabilities?.length) {
                     allVulnerabilities = allVulnerabilities.concat(result.vulnerabilities);
                 }
-                
+
                 extensionStatusBarItem.text = `$(sync~spin) Scanning (${uris.indexOf(uri) + 1}/${uris.length})`;
             } catch (error) {
                 console.error(`Error scanning ${uri.fsPath}:`, error);
@@ -178,15 +194,15 @@ async function scanProjectDependencies(extensionUri) {
     }
 
     extensionStatusBarItem.text = '$(sync~spin) Scanning dependencies...';
-    
+
     try {
         const workspacePath = workspaceFolders[0].uri.fsPath;
         const dependencyVulns = await DependencyScanner.scanProject(workspacePath);
-        
+
         if (dependencyVulns.length > 0) {
             vscode.window.showInformationMessage(`Found ${dependencyVulns.length} dependency vulnerabilities`);
         }
-        
+
         return dependencyVulns;
     } catch (error) {
         vscode.window.showErrorMessage(`Dependency scan failed: ${error.message}`);
@@ -205,24 +221,24 @@ async function scanDocument(document, extensionUri) {
 
     scanInProgress = true;
     extensionStatusBarItem.text = '$(sync~spin) Scanning...';
-    
+
     try {
         /** @type {ScanResult} */
         const result = await scanForVulnerabilities(document) || { vulnerabilities: [], riskScore: 0 };
-        
+
         // Ensure vulnerabilities is always an array
-        const vulnerabilities = Array.isArray(result.vulnerabilities) 
-            ? result.vulnerabilities 
+        const vulnerabilities = Array.isArray(result.vulnerabilities)
+            ? result.vulnerabilities
             : [];
-        
+
         updateDiagnostics(document, vulnerabilities);
-        
+
         if (vscode.workspace.getConfiguration('vulnerabilityScanner').get('showPanelAutomatically') && vulnerabilities.length > 0) {
             showResults(vulnerabilities, extensionUri);
         }
-        
+
         updateStatusBar(vulnerabilities.length);
-        
+
         return {
             vulnerabilities,
             riskScore: typeof result.riskScore === 'number' ? result.riskScore : 0
@@ -261,11 +277,11 @@ function showResults(vulnerabilities, extensionUri) {
             extensionUri,
             vulnerabilities
         );
-        
+
         const highCount = vulnerabilities.filter(v => v.severity === 'High' || v.severity === 'Critical').length;
         extensionStatusBarItem.text = `$(warning) ${vulnerabilities.length} vulns (${highCount} high)`;
         extensionStatusBarItem.color = highCount > 0 ? new vscode.ThemeColor('errorForeground') : undefined;
-        
+
         if (vscode.workspace.getConfiguration('vulnerabilityScanner').get('showNotificationOnFind')) {
             vscode.window.showWarningMessage(
                 `Found ${vulnerabilities.length} vulnerabilities (${highCount} high/critical)`,
@@ -307,7 +323,7 @@ function updateDiagnostics(document, vulnerabilities) {
         );
         diagnostic.code = vuln.cve;
         diagnostic.source = 'Vulnerability Scanner';
-        
+
         // Add related information with fix suggestion
         if (vuln.fix) {
             diagnostic.relatedInformation = [
@@ -317,7 +333,7 @@ function updateDiagnostics(document, vulnerabilities) {
                 )
             ];
         }
-        
+
         return diagnostic;
     });
 
@@ -344,7 +360,7 @@ async function fixAllVulnerabilities() {
 
     const response = await vscode.window.showQuickPick(
         ['Preview changes', 'Apply all fixes', 'Cancel'],
-        { 
+        {
             placeHolder: `Found ${fixableVulns.length} auto-fixable vulnerabilities`,
             ignoreFocusOut: true
         }
@@ -377,7 +393,7 @@ function getDiagnosticSeverity(severity) {
  */
 async function applyFixes(document, vulnerabilities) {
     const edit = new vscode.WorkspaceEdit();
-    
+
     vulnerabilities.forEach(vuln => {
         const line = document.lineAt(vuln.line - 1);
         const fixedText = line.text.replace(vuln.autoFix.pattern, vuln.autoFix.replacement);
