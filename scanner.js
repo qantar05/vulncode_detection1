@@ -1,40 +1,61 @@
 const vscode = require('vscode');
-const { OpenAI } = require('openai');
 const ASTParser = require('./astParser');
-
-// Configure OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || vscode.workspace.getConfiguration('vulnerabilityScanner').get('openaiApiKey'),
-});
+const cweApi = require('./cweApi');
 
 class Vulnerability {
-    constructor(type, severity, message, line, codeSnippet, fix, documentation, cve, detailedSolution, context, autoFix = null) {
-        this.type = type;
-        this.severity = severity;
-        this.message = message;
+    /**
+     * Create a new vulnerability
+     * @param {string|null} type - Vulnerability type (can be populated from CWE API)
+     * @param {string|null} severity - Severity level (can be populated from CWE API)
+     * @param {string} message - Brief description of the vulnerability
+     * @param {number} line - Line number where the vulnerability was found
+     * @param {string} codeSnippet - Code snippet containing the vulnerability
+     * @param {string|null} fix - Brief fix recommendation (can be populated from CWE API)
+     * @param {string|null} documentation - Documentation URL (can be populated from CWE API)
+     * @param {string|null} cve - CVE identifier
+     * @param {string|null} detailedSolution - Detailed fix recommendation (can be populated from CWE API)
+     * @param {string|null} context - Additional context (can be populated from CWE API)
+     * @param {object|null} autoFix - Auto-fix information
+     * @param {number|null} cweId - CWE identifier (essential for CWE API integration)
+     */
+    constructor(type, severity, message, line, codeSnippet, fix = null, documentation = null, cve = null, detailedSolution = null, context = null, autoFix = null, cweId = null) {
+        // Required fields
         this.line = line;
         this.codeSnippet = codeSnippet;
-        this.fix = fix;
-        this.documentation = documentation;
-        this.cve = cve;
-        this.detailedSolution = detailedSolution;
-        this.context = context;
-        this.autoFix = autoFix;
+        this.message = message || 'Potential security vulnerability detected';
+
+        // Fields that can be populated from CWE API
+        this.type = type || null;
+        this.severity = severity || 'Medium';  // Default severity
+        this.fix = fix || null;
+        this.documentation = documentation || null;
+        this.detailedSolution = detailedSolution || null;
+        this.context = context || null;
+
+        // Other fields
+        this.cve = cve || null;
+        this.autoFix = autoFix || null;
+        this.cweId = cweId || null;
+
+        // Fields for AI enrichment
         this.aiAnalysis = '';
         this.attackScenario = '';
         this.testCases = [];
         this.cvssScore = null;
         this.poc = '';
+        this.cweInfo = null;
     }
 
     async enrichWithAI() {
+        // Check if AI features are enabled
         if (vscode.workspace.getConfiguration('vulnerabilityScanner').get('enableAI')) {
             try {
+                // Generate attack scenario and proof of concept
                 this.attackScenario = await this.generateAttackScenario();
                 this.aiAnalysis = await this.generateAIExplanation();
                 this.testCases = await this.generateTestCases();
                 this.poc = await this.generateProofOfConcept();
-                
+
                 if (this.cve) {
                     this.cvssScore = await this.getCvssScore();
                 }
@@ -42,180 +63,226 @@ class Vulnerability {
                 console.error('AI enrichment error:', error);
             }
         }
+
+        // Fetch CWE information if available (independent of AI features)
+        if (this.cweId && vscode.workspace.getConfiguration('vulnerabilityScanner').get('enableCWEApi', true)) {
+            try {
+                await this.fetchCWEInfo();
+            } catch (error) {
+                console.error('CWE info fetch error:', error);
+            }
+        }
+    }
+
+    /**
+     * Fetch CWE information from the CWE REST API and populate vulnerability fields
+     * @returns {Promise<void>}
+     */
+    async fetchCWEInfo() {
+        if (!this.cweId) return;
+
+        try {
+            this.cweInfo = await cweApi.getSimplifiedCWEInfo(this.cweId);
+
+            // Enhanced debug logging to understand the CWE data structure
+            console.log(`CWE-${this.cweId} info received:`, {
+                name: this.cweInfo?.name,
+                description: this.cweInfo?.description?.substring(0, 50) + '...',
+                mitigationsCount: this.cweInfo?.mitigations?.length || 0,
+                consequencesCount: this.cweInfo?.consequences?.length || 0,
+                mitigationsExample: this.cweInfo?.mitigations?.[0] ?
+                    (typeof this.cweInfo.mitigations[0] === 'string' ?
+                        this.cweInfo.mitigations[0].substring(0, 50) + '...' :
+                        JSON.stringify(this.cweInfo.mitigations[0]).substring(0, 50) + '...') :
+                    'none'
+            });
+
+            // Log the full mitigations array for debugging
+            if (this.cweInfo?.mitigations) {
+                console.log(`CWE-${this.cweId} mitigations:`, JSON.stringify(this.cweInfo.mitigations, null, 2));
+            } else {
+                console.log(`CWE-${this.cweId} has no mitigations data`);
+            }
+
+            if (this.cweInfo) {
+                // Set type if not already set or if it's a generic name
+                if (!this.type || this.type.includes('Vulnerability')) {
+                    this.type = this.cweInfo.name || `CWE-${this.cweId} Vulnerability`;
+                }
+
+                // Update documentation link
+                if (this.cweInfo.url) {
+                    this.documentation = this.cweInfo.url;
+                    this.cweDocumentation = this.cweInfo.url;
+                }
+
+                // Update severity if not already set or if set to default
+                if ((!this.severity || this.severity === 'Medium') && this.cweInfo.severity) {
+                    this.severity = this.cweInfo.severity;
+                }
+
+                // Set description/context if not already set
+                if (!this.context || this.context.length < 50) {
+                    this.context = this.cweInfo.description || this.context;
+                }
+
+                // Set fix recommendation if not already set
+                if (!this.fix || this.fix.length < 20) {
+                    // Extract mitigation advice from CWE
+                    if (this.cweInfo.mitigations && Array.isArray(this.cweInfo.mitigations) && this.cweInfo.mitigations.length > 0) {
+                        const mitigations = this.cweInfo.mitigations.map(m => {
+                            if (typeof m === 'string') return m;
+                            if (m && typeof m === 'object' && m.Description) return m.Description;
+                            return '';
+                        }).filter(m => m).join('\n');
+
+                        if (mitigations) {
+                            this.fix = mitigations;
+
+                            // Always update detailed solution with mitigations
+                            this.detailedSolution = mitigations;
+
+                            console.log(`Set fix and detailedSolution for CWE-${this.cweId}:`, {
+                                fixLength: this.fix?.length || 0,
+                                detailedSolutionLength: this.detailedSolution?.length || 0
+                            });
+                        } else {
+                            console.log(`No mitigations text could be extracted for CWE-${this.cweId}`);
+                        }
+                    } else {
+                        console.log(`No valid mitigations array for CWE-${this.cweId}`);
+                    }
+                } else {
+                    console.log(`Fix already set for CWE-${this.cweId}, length: ${this.fix?.length || 0}`);
+                }
+
+                // Enhance message with CWE information if it's generic
+                if (this.message && this.message.length < 30 && this.cweInfo.description) {
+                    this.message = `${this.message} (${this.cweInfo.description.substring(0, 100)}${this.cweInfo.description.length > 100 ? '...' : ''})`;
+                }
+            }
+        } catch (error) {
+            console.error(`Error fetching CWE-${this.cweId} information:`, error);
+        }
     }
 
     async generateAttackScenario() {
-        const prompt = `Generate a detailed attack scenario for a ${this.type} vulnerability. 
-        Vulnerability details: ${this.message}
-        Code context: ${this.codeSnippet}
-        
-        Provide:
-        1. How an attacker could exploit this
-        2. Potential impact
-        3. Step-by-step exploitation process
-        4. Real-world examples of similar exploits`;
-
-        const response = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo",
-            messages: [{
-                role: "user",
-                content: prompt
-            }],
-            max_tokens: 500,
-            temperature: 0.7,
-        });
-
-        return response.choices[0].message.content.trim();
+        // Use the AttackSimulator instead of direct OpenAI calls
+        const AttackSimulator = require('./attackSimulator');
+        try {
+            // We'll reuse the generateProofOfConcept method since it provides similar information
+            return await AttackSimulator.generateProofOfConcept(this);
+        } catch (error) {
+            console.error('Error generating attack scenario:', error);
+            return "Could not generate attack scenario due to an error.";
+        }
     }
 
     async generateAIExplanation() {
-        const prompt = `Explain why this code is vulnerable to ${this.type}:
-        Code: ${this.codeSnippet}
-        Vulnerability: ${this.message}
-        
-        Provide:
-        1. Technical explanation of the vulnerability
-        2. Why the current implementation is insecure
-        3. Security principles being violated`;
-
-        const response = await openai.completions.create({
-            model: "text-davinci-003",
-            prompt: prompt,
-            max_tokens: 300,
-            temperature: 0.5,
-        });
-
-        return response.choices[0].text.trim();
+        // Use the AttackSimulator instead of direct OpenAI calls
+        const AttackSimulator = require('./attackSimulator');
+        try {
+            // We'll reuse the generateProofOfConcept method but modify the prompt
+            // This is a simplified approach - in a real implementation, you might want to add a specific method
+            return await AttackSimulator.generateProofOfConcept(this);
+        } catch (error) {
+            console.error('Error generating AI explanation:', error);
+            return "Could not generate explanation due to an error.";
+        }
     }
 
     async generateTestCases() {
-        const prompt = `Generate 3 test cases to verify the presence of a ${this.type} vulnerability:
-        Vulnerability: ${this.message}
-        Code: ${this.codeSnippet}
-        
-        For each test case provide:
-        1. Input to use
-        2. Expected behavior if vulnerable
-        3. Expected behavior if fixed`;
-
-        const response = await openai.completions.create({
-            model: "text-davinci-003",
-            prompt: prompt,
-            max_tokens: 400,
-            temperature: 0.6,
-        });
-
-        const testCases = [];
-        const lines = response.choices[0].text.trim().split('\n');
-        let currentCase = {};
-        
-        for (const line of lines) {
-            if (line.match(/Test Case \d:/i)) {
-                if (Object.keys(currentCase).length > 0) {
-                    testCases.push(currentCase);
-                }
-                currentCase = { 
-                    name: line.trim(),
-                    input: '',
-                    vulnerableBehavior: '',
-                    fixedBehavior: ''
-                };
-            } else if (line.match(/Input:/i)) {
-                currentCase.input = line.replace(/Input:/i, '').trim();
-            } else if (line.match(/Vulnerable Behavior:/i)) {
-                currentCase.vulnerableBehavior = line.replace(/Vulnerable Behavior:/i, '').trim();
-            } else if (line.match(/Fixed Behavior:/i)) {
-                currentCase.fixedBehavior = line.replace(/Fixed Behavior:/i, '').trim();
-            }
-        }
-        
-        if (Object.keys(currentCase).length > 0) {
-            testCases.push(currentCase);
-        }
-        
-        return testCases;
+        // Return a simple test case since we're focusing on the Attack Simulator functionality
+        return [{
+            name: "Test Case 1",
+            input: "Use the Attack Simulator button for detailed vulnerability analysis.",
+            vulnerableBehavior: "The vulnerability would be exploitable.",
+            fixedBehavior: "The vulnerability would be mitigated."
+        }];
     }
 
     async generateProofOfConcept() {
-        const prompt = `Generate a safe proof-of-concept exploit for a ${this.type} vulnerability.
-        Vulnerability details: ${this.message}
-        Code context: ${this.codeSnippet}
-        
-        Provide:
-        1. A working exploit code snippet
-        2. Explanation of how it works
-        3. Expected output when successful
-        4. Safety precautions for testing`;
-
-        const response = await openai.completions.create({
-            model: "text-davinci-003",
-            prompt: prompt,
-            max_tokens: 600,
-            temperature: 0.7,
-        });
-
-        return response.choices[0].text.trim();
+        // Use the AttackSimulator instead of direct OpenAI calls
+        const AttackSimulator = require('./attackSimulator');
+        try {
+            return await AttackSimulator.generateProofOfConcept(this);
+        } catch (error) {
+            console.error('Error generating proof of concept:', error);
+            return "Could not generate proof of concept due to an error.";
+        }
     }
 
     async getCvssScore() {
-        try {
-            // This would typically call an API like NVD or a vulnerability database
-            // For now, we'll simulate it with AI
-            const prompt = `Estimate a CVSS score (0-10) for a ${this.type} vulnerability:
-            Description: ${this.message}
-            CVE: ${this.cve}
-            
-            Provide just the numerical score (e.g., 7.5)`;
-
-            const response = await openai.completions.create({
-                model: "text-davinci-003",
-                prompt: prompt,
-                max_tokens: 10,
-                temperature: 0.3,
-            });
-
-            return parseFloat(response.choices[0].text.trim());
-        } catch (error) {
-            console.error('CVSS score estimation error:', error);
-            return null;
-        }
+        // Return a default score based on severity
+        const severityScores = {
+            'Critical': 9.5,
+            'High': 7.5,
+            'Medium': 5.0,
+            'Low': 2.5
+        };
+        return severityScores[this.severity] || 5.0;
     }
 }
 
 async function scanForVulnerabilities(document) {
-    const vulnerabilities = [];
-    const text = document.getText();
-    const language = document.languageId;
+    try {
+        const vulnerabilities = [];
+        const text = document.getText();
+        const language = document.languageId;
 
-    // First use AST parsing for more accurate detection
-    if (language === 'javascript' || language === 'typescript') {
-        const astVulnerabilities = await ASTParser.parseJavaScript(text, document);
-        vulnerabilities.push(...astVulnerabilities);
-    }
+        console.log(`Scanning document: ${document.fileName}, language: ${language}`);
 
-    // Then use regex patterns as fallback
-    if (language === 'java') {
-        detectJavaVulnerabilities(text, document, vulnerabilities);
-    } else if (language === 'javascript' || language === 'typescript') {
-        detectJavaScriptVulnerabilities(text, document, vulnerabilities);
-    } else if (language === 'python') {
-        detectPythonVulnerabilities(text, document, vulnerabilities);
-    }
+        // First use AST parsing for more accurate detection
+        if (language === 'javascript' || language === 'typescript') {
+            try {
+                const astVulnerabilities = await ASTParser.parseJavaScript(text, document);
+                if (Array.isArray(astVulnerabilities)) {
+                    vulnerabilities.push(...astVulnerabilities);
+                }
+            } catch (error) {
+                console.error('Error in AST parsing:', error);
+            }
+        }
 
-    // Enrich vulnerabilities with AI analysis
-    if (vscode.workspace.getConfiguration('vulnerabilityScanner').get('enableAI')) {
+        // Then use regex patterns as fallback
+        try {
+            if (language === 'java') {
+                detectJavaVulnerabilities(text, document, vulnerabilities);
+            } else if (language === 'javascript' || language === 'typescript') {
+                detectJavaScriptVulnerabilities(text, document, vulnerabilities);
+            } else if (language === 'python') {
+                detectPythonVulnerabilities(text, document, vulnerabilities);
+            }
+        } catch (error) {
+            console.error('Error in regex pattern detection:', error);
+        }
+
+        // Enrich vulnerabilities with information
         await Promise.all(vulnerabilities.map(async vuln => {
-            await vuln.enrichWithAI();
+            try {
+                await vuln.enrichWithAI();
+            } catch (error) {
+                console.error('Error enriching vulnerability:', error);
+            }
         }));
+
+        // Calculate risk score based on vulnerabilities
+        const riskScore = calculateRiskScore(vulnerabilities);
+
+        console.log(`Scan completed. Found ${vulnerabilities.length} vulnerabilities.`);
+
+        return {
+            vulnerabilities,
+            riskScore
+        };
+    } catch (error) {
+        console.error('Error in vulnerability scanning:', error);
+        return {
+            vulnerabilities: [],
+            riskScore: 0,
+            error: error.message
+        };
     }
-
-    // Calculate risk score based on vulnerabilities
-    const riskScore = calculateRiskScore(vulnerabilities);
-
-    return {
-        vulnerabilities,
-        riskScore
-    };
 }
 
 function calculateRiskScore(vulnerabilities) {
@@ -238,70 +305,72 @@ function calculateRiskScore(vulnerabilities) {
 function detectJavaVulnerabilities(text, document, vulnerabilities) {
     let match;
 
-    // SQL Injection
+    // SQL Injection (CWE-89)
     const sqlInjectionPattern = /(?:Statement|executeQuery|executeUpdate)\s*\([^)]*['"][^'"]*['"]/gi;
     while ((match = sqlInjectionPattern.exec(text)) !== null) {
         const line = document.positionAt(match.index).line + 1;
         const codeSnippet = getCodeSnippet(text, line);
-        
+
         vulnerabilities.push(new Vulnerability(
-            'SQL Injection',
-            'High',
-            'Concatenated SQL query detected',
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential SQL injection vulnerability detected',
             line,
             codeSnippet,
-            'Use PreparedStatement with parameterized queries',
-            'https://owasp.org/www-community/attacks/SQL_Injection',
-            'CVE-2021-1234',
-            `1. Replace with: PreparedStatement stmt = conn.prepareStatement("SELECT * FROM users WHERE id = ?");
-2. Use stmt.setString(1, userInput) for parameters`,
-            'Attackers can inject malicious SQL through unparameterized inputs',
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
             {
                 pattern: /(['"]).*?\1/,
                 replacement: '?'
-            }
+            },
+            89 // CWE-89: Improper Neutralization of Special Elements used in an SQL Command
         ));
     }
 
-    // XSS
+    // XSS (CWE-79)
     const xssPattern = /(?:response\.getWriter\(\)\.write|print(?:ln)?)\s*\([^)]*['"][^'"]*['"]/gi;
     while ((match = xssPattern.exec(text)) !== null) {
         const line = document.positionAt(match.index).line + 1;
         const codeSnippet = getCodeSnippet(text, line);
-        
+
         vulnerabilities.push(new Vulnerability(
-            'Cross-Site Scripting (XSS)',
-            'High',
-            'Unsanitized output to HTTP response',
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential Cross-Site Scripting (XSS) vulnerability detected',
             line,
             codeSnippet,
-            'Use OWASP Java Encoder or HTML escaping',
-            'https://owasp.org/www-community/attacks/xss/',
-            'CVE-2021-2345',
-            `1. Add: import org.owasp.encoder.Encode;
-2. Replace with: response.getWriter().write(Encode.forHtml(userInput))`,
-            'Attackers can inject malicious scripts into web pages'
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            79 // CWE-79: Improper Neutralization of Input During Web Page Generation
         ));
     }
 
-    // Insecure Deserialization
+    // Insecure Deserialization (CWE-502)
     const deserializationPattern = /(?:ObjectInputStream|readObject|readUnshared)\s*\([^)]*\)/gi;
     while ((match = deserializationPattern.exec(text)) !== null) {
         const line = document.positionAt(match.index).line + 1;
         const codeSnippet = getCodeSnippet(text, line);
-        
+
         vulnerabilities.push(new Vulnerability(
-            'Insecure Deserialization',
-            'Critical',
-            'Raw deserialization of objects detected',
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential insecure deserialization vulnerability detected',
             line,
             codeSnippet,
-            'Implement validateObject() or use safe formats like JSON',
-            'https://owasp.org/www-community/vulnerabilities/Deserialization_of_untrusted_data',
-            'CVE-2021-3456',
-            `1. Add: inputStream.setObjectInputFilter(new CustomFilter());
-2. Or migrate to JSON parsers like Jackson`,
-            'Attackers can craft malicious serialized objects to execute code'
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            502 // CWE-502: Deserialization of Untrusted Data
         ));
     }
 }
@@ -310,53 +379,297 @@ function detectJavaVulnerabilities(text, document, vulnerabilities) {
 function detectJavaScriptVulnerabilities(text, document, vulnerabilities) {
     let match;
 
-    // Prototype Pollution
+    // Prototype Pollution (CWE-1321)
     const prototypePollutionPattern = /(?:Object\.assign|merge|extend)\s*\([^)]*['"](?:__proto__|constructor|prototype)/gi;
     while ((match = prototypePollutionPattern.exec(text)) !== null) {
         const line = document.positionAt(match.index).line + 1;
         const codeSnippet = getCodeSnippet(text, line);
-        
+
         vulnerabilities.push(new Vulnerability(
-            'Prototype Pollution',
-            'High',
-            'Dangerous object property merge',
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential prototype pollution vulnerability detected',
             line,
             codeSnippet,
-            'Use Object.create(null) for safe objects',
-            'https://owasp.org/www-community/attacks/Prototype_Pollution',
-            'CVE-2021-2345',
-            `1. Replace with: const safeMerge = (target, ...sources) => {
-   sources.forEach(source => {
-       Object.keys(source).forEach(key => {
-           if (key !== '__proto__') {
-               target[key] = source[key];
-           }
-       });
-   });
-}`,
-            'Attackers can modify object prototypes to change application behavior'
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            1321 // CWE-1321: Improperly Controlled Modification of Object Prototype Attributes ('Prototype Pollution')
         ));
     }
 
-    // Insecure eval()
-    const evalPattern = /\beval\s*\(|new Function\s*\(/gi;
+    // Insecure eval() (CWE-95)
+    const evalPattern = /\beval\s*\(|new Function\s*\(|setTimeout\s*\(\s*['"][^'"]*['"]/gi;
     while ((match = evalPattern.exec(text)) !== null) {
         const line = document.positionAt(match.index).line + 1;
         const codeSnippet = getCodeSnippet(text, line);
-        
+
         vulnerabilities.push(new Vulnerability(
-            'Insecure eval()',
-            'Critical',
-            'Dynamic code execution detected',
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential code injection vulnerability detected',
             line,
             codeSnippet,
-            'Use JSON.parse() or safe alternatives',
-            'https://owasp.org/www-community/attacks/Code_Injection',
-            'CVE-2021-3456',
-            `1. For JSON: JSON.parse(userInput)
-2. For math: mathjs.evaluate(userInput)
-3. For templates: Handlebars.compile(template)`,
-            'Attackers can execute arbitrary JavaScript code'
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            95 // CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')
+        ));
+    }
+
+    // Hard-coded Credentials (CWE-259/CWE-798)
+    const hardcodedCredentialsPattern = /(?:const|let|var)\s+(?:\w+(?:password|passwd|pwd|secret|key|token|credential|auth))\s*=\s*['"][^'"]+['"]/gi;
+    while ((match = hardcodedCredentialsPattern.exec(text)) !== null) {
+        const line = document.positionAt(match.index).line + 1;
+        const codeSnippet = getCodeSnippet(text, line);
+
+        vulnerabilities.push(new Vulnerability(
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Hard-coded credentials detected',
+            line,
+            codeSnippet,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            798 // CWE-798: Use of Hard-coded Credentials
+        ));
+    }
+
+    // Weak Cryptography (CWE-327)
+    const weakCryptoPattern = /crypto\.createCipher\s*\(\s*['"](?:des|rc4|md5)['"]/gi;
+    while ((match = weakCryptoPattern.exec(text)) !== null) {
+        const line = document.positionAt(match.index).line + 1;
+        const codeSnippet = getCodeSnippet(text, line);
+
+        vulnerabilities.push(new Vulnerability(
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Use of weak cryptographic algorithm detected',
+            line,
+            codeSnippet,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            327 // CWE-327: Use of a Broken or Risky Cryptographic Algorithm
+        ));
+    }
+
+    // CSRF (CWE-352)
+    const csrfPattern = /app\.(?:post|put|delete)\s*\(\s*['"][^'"]+['"]\s*,\s*\([^)]*\)\s*=>/gi;
+    while ((match = csrfPattern.exec(text)) !== null) {
+        // Check if there's no CSRF token validation in the following lines
+        const nextLines = text.substring(match.index, match.index + 200);
+        if (!nextLines.match(/csrf|xsrf|token|nonce/i)) {
+            const line = document.positionAt(match.index).line + 1;
+            const codeSnippet = getCodeSnippet(text, line);
+
+            vulnerabilities.push(new Vulnerability(
+                null, // Will be populated from CWE API
+                null, // Will be populated from CWE API
+                'Potential CSRF vulnerability detected',
+                line,
+                codeSnippet,
+                null, // Will be populated from CWE API
+                null, // Will be populated from CWE API
+                null,
+                null, // Will be populated from CWE API
+                null, // Will be populated from CWE API
+                null,
+                352 // CWE-352: Cross-Site Request Forgery (CSRF)
+            ));
+        }
+    }
+
+    // Path Traversal (CWE-22)
+    const pathTraversalPattern = /(?:fs|require\(['"]fs['"]\))\.(?:readFileSync|readFile|writeFileSync|writeFile|appendFileSync|appendFile|createReadStream|createWriteStream)\s*\(\s*(?:[^)]*\+\s*|`[^`]*\$\{)[^)]*\)/gi;
+    while ((match = pathTraversalPattern.exec(text)) !== null) {
+        const line = document.positionAt(match.index).line + 1;
+        const codeSnippet = getCodeSnippet(text, line);
+
+        vulnerabilities.push(new Vulnerability(
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential path traversal vulnerability detected',
+            line,
+            codeSnippet,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            22 // CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')
+        ));
+    }
+
+    // SSRF (CWE-918)
+    const ssrfPattern = /(?:fetch|axios|http\.get|https\.get|request|superagent)\s*\(\s*(?:[^)]*\+\s*|`[^`]*\$\{|req\.(?:query|params|body)\.)[^)]*\)/gi;
+    while ((match = ssrfPattern.exec(text)) !== null) {
+        const line = document.positionAt(match.index).line + 1;
+        const codeSnippet = getCodeSnippet(text, line);
+
+        vulnerabilities.push(new Vulnerability(
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential Server-Side Request Forgery (SSRF) vulnerability detected',
+            line,
+            codeSnippet,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            918 // CWE-918: Server-Side Request Forgery (SSRF)
+        ));
+    }
+
+    // Alternative SSRF pattern - direct use of user input in URL
+    const directUrlPattern = /(?:function|const|let|var)\s+\w+\s*\([^)]*\)\s*\{[^}]*(?:fetch|axios|http\.get|https\.get|request)\s*\(\s*(?:url|req\.query\.url)/gi;
+    while ((match = directUrlPattern.exec(text)) !== null) {
+        const line = document.positionAt(match.index).line + 1;
+        const codeSnippet = getCodeSnippet(text, line);
+
+        vulnerabilities.push(new Vulnerability(
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential Server-Side Request Forgery (SSRF) vulnerability detected',
+            line,
+            codeSnippet,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            918 // CWE-918: Server-Side Request Forgery (SSRF)
+        ));
+    }
+
+    // Weak Randomness (CWE-330)
+    const weakRandomnessPattern = /Math\.random\s*\(\s*\)/gi;
+    while ((match = weakRandomnessPattern.exec(text)) !== null) {
+        const line = document.positionAt(match.index).line + 1;
+        const codeSnippet = getCodeSnippet(text, line);
+
+        vulnerabilities.push(new Vulnerability(
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Use of cryptographically weak random number generator',
+            line,
+            codeSnippet,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            330 // CWE-330: Use of Insufficiently Random Values
+        ));
+    }
+
+    // Unrestricted File Upload (CWE-434)
+    const unrestrictionUploadPattern = /(?:\.mv\s*\(|multer|formidable|busboy|multiparty|file\.mv|req\.files)/gi;
+    while ((match = unrestrictionUploadPattern.exec(text)) !== null) {
+        // Check if there's no file type validation in the following lines
+        const nextLines = text.substring(match.index, match.index + 200);
+        if (!nextLines.match(/(?:filetype|mimetype|extension).*check|\.(?:endsWith|match)\s*\(\s*['"]\.(?:jpg|png|pdf)/i)) {
+            const line = document.positionAt(match.index).line + 1;
+            const codeSnippet = getCodeSnippet(text, line);
+
+            vulnerabilities.push(new Vulnerability(
+                null, // Will be populated from CWE API
+                null, // Will be populated from CWE API
+                'Potential unrestricted file upload vulnerability detected',
+                line,
+                codeSnippet,
+                null, // Will be populated from CWE API
+                null, // Will be populated from CWE API
+                null,
+                null, // Will be populated from CWE API
+                null, // Will be populated from CWE API
+                null,
+                434 // CWE-434: Unrestricted Upload of File with Dangerous Type
+            ));
+        }
+    }
+
+    // Integer Overflow (CWE-190)
+    const integerOverflowPattern = /(?:(?:var|let|const)\s+\w+\s*=\s*\d+|[\w.]+\s*\+=\s*[\w.]+)(?![\s\S]*(?:if\s*\(\s*[\w.]+\s*(?:>|<|>=|<=)\s*(?:Number\.MAX_SAFE_INTEGER|Number\.MIN_SAFE_INTEGER|\d+)\s*\)))/gi;
+    while ((match = integerOverflowPattern.exec(text)) !== null) {
+        const line = document.positionAt(match.index).line + 1;
+        const codeSnippet = getCodeSnippet(text, line);
+
+        vulnerabilities.push(new Vulnerability(
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential integer overflow vulnerability detected',
+            line,
+            codeSnippet,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            190 // CWE-190: Integer Overflow or Wraparound
+        ));
+    }
+
+    // Missing Encryption (CWE-311)
+    const missingEncryptionPattern = /(?:localStorage\.setItem|sessionStorage\.setItem)\s*\(\s*['"][^'"]*(?:password|token|secret|key|auth|credential|ssn|dob|credit|card|social|security|personal|private|sensitive)['"]/gi;
+    while ((match = missingEncryptionPattern.exec(text)) !== null) {
+        const line = document.positionAt(match.index).line + 1;
+        const codeSnippet = getCodeSnippet(text, line);
+
+        vulnerabilities.push(new Vulnerability(
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Sensitive data stored without encryption',
+            line,
+            codeSnippet,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            311 // CWE-311: Missing Encryption of Sensitive Data
+        ));
+    }
+
+    // Alternative pattern for missing encryption - JSON.stringify of sensitive data
+    const jsonStringifyPattern = /JSON\.stringify\s*\(\s*\{[^}]*(?:ssn|dob|credit|card|social|security|personal|private|sensitive)[^}]*\}\s*\)/gi;
+    while ((match = jsonStringifyPattern.exec(text)) !== null) {
+        const line = document.positionAt(match.index).line + 1;
+        const codeSnippet = getCodeSnippet(text, line);
+
+        vulnerabilities.push(new Vulnerability(
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Sensitive data stored without encryption',
+            line,
+            codeSnippet,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            311 // CWE-311: Missing Encryption of Sensitive Data
         ));
     }
 }
@@ -365,49 +678,69 @@ function detectJavaScriptVulnerabilities(text, document, vulnerabilities) {
 function detectPythonVulnerabilities(text, document, vulnerabilities) {
     let match;
 
-    // SQL Injection
+    // SQL Injection (CWE-89)
     const pySqlPattern = /(?:execute|executemany)\s*\([^)]*['"][^'"]*['"]\s*[),]/gi;
     while ((match = pySqlPattern.exec(text)) !== null) {
         const line = document.positionAt(match.index).line + 1;
         const codeSnippet = getCodeSnippet(text, line);
-        
+
         vulnerabilities.push(new Vulnerability(
-            'SQL Injection',
-            'High',
-            'Concatenated SQL query in Python',
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential SQL injection vulnerability detected in Python code',
             line,
             codeSnippet,
-            'Use parameterized queries',
-            'https://owasp.org/www-community/attacks/SQL_Injection',
-            'CVE-2021-1234',
-            `1. For SQLite: 
-cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-2. For PostgreSQL: 
-cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))`,
-            'Attackers can inject malicious SQL through string formatting'
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            89 // CWE-89: Improper Neutralization of Special Elements used in an SQL Command
         ));
     }
 
-    // Insecure eval()
+    // Insecure eval() (CWE-95)
     const pyEvalPattern = /(?:eval|exec)\s*\([^)]*input\s*\(/gi;
     while ((match = pyEvalPattern.exec(text)) !== null) {
         const line = document.positionAt(match.index).line + 1;
         const codeSnippet = getCodeSnippet(text, line);
-        
+
         vulnerabilities.push(new Vulnerability(
-            'Insecure eval()',
-            'Critical',
-            'Dynamic code execution from user input',
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential code injection vulnerability detected in Python code',
             line,
             codeSnippet,
-            'Use ast.literal_eval() for simple parsing',
-            'https://owasp.org/www-community/attacks/Code_Injection',
-            'CVE-2021-2345',
-            `1. For math: Use eval only with whitelisted chars:
-if set(user_input) <= set('0123456789+-*/.() '):
-    eval(user_input)
-2. For JSON: json.loads(user_input)`,
-            'Attackers can execute arbitrary Python code'
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            95 // CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code
+        ));
+    }
+
+    // Pickle Deserialization (CWE-502)
+    const picklePattern = /pickle\.(?:loads|load)\s*\(/gi;
+    while ((match = picklePattern.exec(text)) !== null) {
+        const line = document.positionAt(match.index).line + 1;
+        const codeSnippet = getCodeSnippet(text, line);
+
+        vulnerabilities.push(new Vulnerability(
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            'Potential insecure deserialization vulnerability detected in Python code',
+            line,
+            codeSnippet,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            null, // Will be populated from CWE API
+            null, // Will be populated from CWE API
+            null,
+            502 // CWE-502: Deserialization of Untrusted Data
         ));
     }
 }
